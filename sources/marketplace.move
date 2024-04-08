@@ -17,6 +17,8 @@ module yield_farming::farm {
     const EMaxFarmsReached: u64 = 2;
     const EFarmAlreadyClosed: u64 = 3;
     const EInsufficientStaked: u64 = 4;
+    const EWithdrawalLimitExceeded: u64 = 5;
+    const ECooldownPeriodNotMet: u64 = 6;
 
     /* Structs */
     struct AdminCap has key, store {
@@ -42,7 +44,9 @@ module yield_farming::farm {
         reward_tokens: Balance<SUI>,
         rewards_distributed: u64,
         started_at: u64,
-        closed_at: Option<u64>
+        closed_at: Option<u64>,
+        withdrawal_limit: u64,
+        withdrawal_cooldown: u64,
     }
 
     struct Stake has key, store {
@@ -50,7 +54,8 @@ module yield_farming::farm {
         owner: address,
         farm: ID,
         amount: u64,
-        staked_at: u64
+        staked_at: u64,
+        last_withdrawal: u64,
     }
 
     /* Functions */
@@ -73,6 +78,8 @@ module yield_farming::farm {
 
     public entry fun create_farm(
         name: String,
+        withdrawal_limit: u64,
+        withdrawal_cooldown: u64,
         clock: &Clock,
         address_vector: &mut OwnerAddressVector,
         ctx: &mut TxContext
@@ -92,7 +99,9 @@ module yield_farming::farm {
             reward_tokens: balance::zero(),
             rewards_distributed: 0,
             started_at: clock::timestamp_ms(clock),
-            closed_at: none()
+            closed_at: none(),
+            withdrawal_limit,
+            withdrawal_cooldown,
         };
 
         let farm_owner_id = object::new(ctx);
@@ -127,7 +136,8 @@ module yield_farming::farm {
             owner: staker_address,
             farm: object::uid_to_inner(&farm.id),
             amount: amount_staked,
-            staked_at: clock::timestamp_ms(clock)
+            staked_at: clock::timestamp_ms(clock),
+            last_withdrawal: clock::timestamp_ms(clock),
         };
 
         transfer::share_object(stake);
@@ -160,9 +170,12 @@ module yield_farming::farm {
         assert!(!farm.closed, EFarmAlreadyClosed);
         assert!(stake.owner == tx_context::sender(ctx), ENotFarmOwner);
         assert!(stake.amount >= amount, EInsufficientStaked);
+        assert!(amount <= farm.withdrawal_limit, EWithdrawalLimitExceeded);
+        assert!(clock::timestamp_ms(clock) - stake.last_withdrawal >= farm.withdrawal_cooldown, ECooldownPeriodNotMet);
 
         let withdrawn = coin::take(&mut farm.staked_tokens, amount, ctx);
         stake.amount -= amount;
+        stake.last_withdrawal = clock::timestamp_ms(clock);
 
         transfer::public_transfer(withdrawn, tx_context::sender(ctx));
 
@@ -181,7 +194,36 @@ module yield_farming::farm {
         farm.closed_at = some(clock::timestamp_ms(clock));
     }
 
-    public entry fun get_farm_details(farm: &Farm): (bool, u64, u64, u64) {
-        (farm.closed, balance::value(&farm.staked_tokens), balance::value(&farm.reward_tokens), farm.rewards_distributed)
+    public entry fun get_farm_details(farm: &Farm): (bool, u64, u64, u64, u64, u64) {
+        (farm.closed, balance::value(&farm.staked_tokens), balance::value(&farm.reward_tokens), farm.rewards_distributed, farm.withdrawal_limit, farm.withdrawal_cooldown)
+    }
+
+    public fun transfer_ownership(
+        _: &FarmOwnerCap,
+        farm: &mut Farm,
+        new_owner: address,
+        address_vector: &mut OwnerAddressVector
+    ) {
+        assert!(farm.creator == tx_context::sender(), ENotFarmOwner);
+        assert!(!vector::contains<address>(&address_vector.addresses, &new_owner), EMaxFarmsReached);
+
+        farm.creator = new_owner;
+        vector::push_back<address>(&mut address_vector.addresses, new_owner);
+    }
+
+    public fun pause_farm(
+        _: &FarmOwnerCap,
+        farm: &mut Farm
+    ) {
+        assert!(farm.creator == tx_context::sender(), ENotFarmOwner);
+        farm.closed = true;
+    }
+
+    public fun resume_farm(
+        _: &FarmOwnerCap,
+        farm: &mut Farm
+    ) {
+        assert!(farm.creator == tx_context::sender(), ENotFarmOwner);
+        farm.closed = false;
     }
 }
