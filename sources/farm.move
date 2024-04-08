@@ -9,8 +9,9 @@ module DefiYieldFarm::farm {
     use sui::balance::{Self, Balance};
     use std::option::{Option, none, some};
     use sui::tx_context::{Self, TxContext, sender};
+    use std::debug::{print};
 
-    const YEAR: u64 = 31556926;
+    const YEAR: u128 = 31556926;
 
     /* Error Constants */
     const ENotFarmOwner: u64 = 0;
@@ -48,6 +49,11 @@ module DefiYieldFarm::farm {
         reward_tokens: Balance<SUI>,
         staked_at: u64
     }
+    // Delete me !! 
+    struct FarmId has key, store {
+        id: UID,
+        farm_id: vector<ID>
+    }
 
     /* Functions */
     fun init(ctx: &mut TxContext) {
@@ -55,6 +61,11 @@ module DefiYieldFarm::farm {
             id: object::new(ctx)
         };
         transfer::transfer(admin, sender(ctx));
+
+        transfer::share_object(FarmId{
+            id:object::new(ctx),
+            farm_id: vector::empty()
+        });
     }
 
     public fun new_stake(farm_id: ID, ctx: &mut TxContext) : Stake {
@@ -69,12 +80,15 @@ module DefiYieldFarm::farm {
     }
 
     public entry fun create_farm(
+        id: &mut FarmId,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
         let farm_owner_address = sender(ctx);
         let farm_uid = object::new(ctx);
         let farm_id = object::uid_to_inner(&farm_uid);
+
+        vector::push_back(&mut id.farm_id, farm_id);
 
         let farm = Farm {
             id: farm_uid,
@@ -129,13 +143,24 @@ module DefiYieldFarm::farm {
 
         let time_elapsed = clock::timestamp_ms(clock) - stake.staked_at;
         let stake_amount = balance::value(&stake.stake);
-        let rewards = (stake_amount) * (time_elapsed / YEAR);
+        
+        let rewards = (((stake_amount as u128) * (time_elapsed as u128)) / ( YEAR) as u64);
         assert!(balance::value(&farm.reward_tokens) >= rewards, EInsufficientBalance);
 
         let coin_ = coin::take(&mut farm.reward_tokens, rewards, ctx);
         let balance_ = coin::into_balance(coin_);
         let amount = balance::join(&mut stake.reward_tokens, balance_);
         farm.rewards_distributed =  farm.rewards_distributed + rewards;
+    }
+
+    public entry fun withdraw_rewards(
+        stake: &mut Stake,
+        ctx: &mut TxContext
+    ) {
+        let balance_ = balance::withdraw_all(&mut stake.reward_tokens);
+        let coin_ = coin::from_balance(balance_, ctx);
+
+        transfer::public_transfer(coin_, sender(ctx));
     }
 
     public entry fun withdraw(
@@ -163,5 +188,16 @@ module DefiYieldFarm::farm {
         assert!(!farm.closed, EFarmAlreadyClosed);
         farm.closed = true;
         farm.closed_at = some(clock::timestamp_ms(clock));
+    }
+
+    public fun get_farm_id(id: &FarmId) : ID {
+        let id_ = vector::borrow(&id.farm_id, 0);
+        *id_
+    }
+
+    #[test_only]
+    // calling init function. 
+    public fun init_for_testing(ctx: &mut TxContext) {
+        init(ctx); 
     }
 }
