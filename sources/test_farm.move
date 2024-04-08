@@ -93,8 +93,8 @@ module DefiYieldFarm::test_farm {
         let farm = ts::take_shared<Farm>(scenario);
         let stake = ts::take_from_sender<Stake>(scenario); 
         let time = ts::take_shared<Clock>(scenario);
-         // increase 1 month
-        clock::increment_for_testing(&mut time, (86400 * 30));
+         // increase approx 1 year. 
+        clock::increment_for_testing(&mut time, (86400 * 31 * 12));
 
         farm::claim_rewards(
             &mut farm,
@@ -120,7 +120,7 @@ module DefiYieldFarm::test_farm {
     next_tx(scenario, bob);
     {
         let bob_balance = ts::take_from_sender<Coin<SUI>>(scenario);
-        assert_eq(coin::value(&bob_balance), 8_213_727_788);
+        assert_eq(coin::value(&bob_balance), 2_037_004_491);
         ts::return_to_sender(scenario, bob_balance);
     };
 
