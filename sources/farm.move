@@ -1,5 +1,5 @@
-#[allow(lint(self_transfer))]
-module yield_farming::farm {
+
+module DefiYieldFarm::farm {
     use std::vector;
     use sui::transfer;
     use sui::sui::SUI;
@@ -19,7 +19,7 @@ module yield_farming::farm {
     const EInsufficientStaked: u64 = 4;
 
     /* Structs */
-    struct AdminCap has key, store {
+    struct AdminCap has key {
         id: UID
     }
 
@@ -59,12 +59,11 @@ module yield_farming::farm {
             id: object::new(ctx)
         };
 
-        let addresses = vector::empty<address>();
         let admin_address = tx_context::sender(ctx);
 
         let owner_address_vector = OwnerAddressVector {
             id: object::new(ctx),
-            addresses,
+            addresses: vector::empty<address>()
         };
 
         transfer::share_object(owner_address_vector);
@@ -72,9 +71,9 @@ module yield_farming::farm {
     }
 
     public entry fun create_farm(
-        name: String,
-        clock: &Clock,
         address_vector: &mut OwnerAddressVector,
+        clock: &Clock,
+        name: String,
         ctx: &mut TxContext
     ) {
         let farm_owner_address = tx_context::sender(ctx);
@@ -109,9 +108,9 @@ module yield_farming::farm {
     }
 
     public entry fun stake(
-        amount: Coin<SUI>,
         farm: &mut Farm,
         clock: &Clock,
+        amount: Coin<SUI>,
         ctx: &mut TxContext
     ) {
         assert!(!farm.closed, EFarmAlreadyClosed);
@@ -145,30 +144,40 @@ module yield_farming::farm {
         let time_elapsed = clock::timestamp_ms(clock) - stake.staked_at;
         let rewards = (stake.amount * time_elapsed) / farm.started_at;
         assert!(balance::value(&farm.reward_tokens) >= rewards, EInsufficientBalance);
-
-        balance::join(&mut stake.owner, coin::take(&mut farm.reward_tokens, rewards, ctx));
-        farm.rewards_distributed += rewards;
+        let coin_ = coin::take(&mut farm.reward_tokens, rewards, ctx);
+        let balance_ = coin::into_balance(coin_);
+        let amount = balance::join(&mut farm.reward_tokens, balance_);
+        stake.amount = stake.amount + rewards;
     }
 
     public entry fun withdraw(
-        amount: u64,
         farm: &mut Farm,
         stake: &mut Stake,
         clock: &Clock,
+        amount: u64,
         ctx: &mut TxContext
     ) {
         assert!(!farm.closed, EFarmAlreadyClosed);
         assert!(stake.owner == tx_context::sender(ctx), ENotFarmOwner);
         assert!(stake.amount >= amount, EInsufficientStaked);
 
-        let withdrawn = coin::take(&mut farm.staked_tokens, amount, ctx);
-        stake.amount -= amount;
+        let witdraw = coin::take(&mut farm.staked_tokens, amount, ctx);
+        stake.staked_at = stake.staked_at -  amount;
 
-        transfer::public_transfer(withdrawn, tx_context::sender(ctx));
+        transfer::public_transfer(witdraw, tx_context::sender(ctx));
 
-        if (stake.amount == 0) {
-            object::delete(stake);
-        }
+        // you cant do it because stake object got &mut referencese. It has to be stake: Stake
+
+        // if (stake.amount == 0) {
+        //    let Stake {
+        //     id,
+        //     owner: _,
+        //     farm: _,
+        //     amount: _,
+        //     staked_at: _ 
+        //    } = stake; 
+        //    object::delete(id);
+        // }
     }
 
     public entry fun close_farm(
